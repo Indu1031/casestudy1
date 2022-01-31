@@ -1,0 +1,61 @@
+import json
+import boto3
+import mysql.connector
+from botocore.exceptions import ClientError
+conn = mysql.connector.connect(
+    host='python-flask.cr8rz5ntakna.ap-south-1.rds.amazonaws.com',
+    user='admin',
+    password='Pass_123',
+    database='self'
+)
+message = {"report_status": "SUCCESS"}
+client = boto3.client('sns')
+reponse = client.publish(
+    TargetArn='arn:aws:sns:ap-south-1:857963831476:snsmain',
+    Message=json.dumps({'default': json.dumps(message)}),
+    MessageStructure='json'
+    )    
+s3_client = boto3.client('s3')
+def lambda_handler(event, context):
+    try:
+        bucket_name=event["Records"][0]["s3"]["bucket"]["name"]
+        print(bucket_name)
+        s3_file_name=event["Records"][0]["s3"]["object"]["key"]
+        response=s3_client.get_object(Bucket=bucket_name,Key=s3_file_name)
+        data = []
+        data = response["Body"].read().decode('utf-8').splitlines()
+        field_header = data[0].split(",")
+        
+        crsr1 = conn.cursor()
+        crsr1.execute("truncate table self.sales_copy;")
+        crsr1.close()
+        print("truncated")
+        with conn.cursor() as cur:
+            
+            for sale in data[1::]: 
+                try:
+                    sale = sale.split(",")
+                    mySql_insert_query = """INSERT INTO self.sales_copy
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) """
+                    record = (sale[0],sale[1],sale[2],sale[3],sale[4],sale[5],sale[6],sale[7],sale[8],sale[9],sale[10],sale[11],sale[12],sale[13])
+                    cur.execute(mySql_insert_query, record)
+                except:
+                    print("exception occured")
+            conn.commit()
+            print("Records inserted successfully into totalsales table")
+        crsr = conn.cursor()
+        crsr.execute("create or replace view self.repot1_view as select Region, substr(Ship_Date,4,7) as Ship_Year_Month, sum( Units_Sold) as Total_Sales , sum(Total_Revenue) as Total_Revenue , sum(Total_Profit) as Total_Profit from self.sales_copy group by Region, Ship_Year_Month order by Region, Ship_Year_Month;")
+        print("Report1 view created")
+        crsr.execute("create or replace view self.repot2_view as select Region, substr(Ship_Date,7,4) as Ship_Year, sum( Units_Sold) as Total_Sales, sum(Total_Revenue) as Total_Revenue, sum(Total_Profit) as Total_Profit from self.sales_copy group by Region, Ship_Year order by Region, Ship_Year;")
+        print("Report2 view created")
+        crsr.execute("create or replace view self.repot3_view as select Region, substr(Ship_Date,7,4) as Ship_Year, Sales_Channel, sum( Units_Sold) from self.sales_copy group by Region, Ship_Year, Sales_Channel order by Region, Ship_Year, Sales_Channel;")
+        print("Report3 created")
+        crsr.close()
+        conn.close()
+    except Exception as err:
+        print(err)
+	return{
+            'statusCode':200,
+            'body': json.dumps('Hello from Lambda!')
+        }
+    
